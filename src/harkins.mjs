@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseClockMinutes } from './lib.mjs';
 import { extractVistaSeats } from './vista.mjs';
+import { extractVisualSeats } from './visual.mjs';
 
 const BLOCK_PATTERNS = /captcha|access denied|temporarily blocked|verify you are human|unusual traffic/i;
 
@@ -111,13 +112,23 @@ export async function inspectSession(context, session, { allowedRows, excludeAcc
   await page.route('**/*', (route) => route.continue());
 
   page.on('response', (response) => {
+    const requestType = response.request().resourceType();
+    if (!['xhr', 'fetch', 'document'].includes(requestType)) return;
     const url = response.url();
     const headers = response.headers();
-    const contentType = headers['content-type'] || '';
     const contentLength = Number(headers['content-length'] || 0);
-    if (!/json/i.test(contentType) || contentLength > 5_000_000) return;
-    const capture = response.json()
-      .then((json) => captures.push({ url, status: response.status(), json }))
+    if (contentLength > 5_000_000) return;
+    const capture = response.body()
+      .then((body) => {
+        if (body.length > 5_000_000) return;
+        const text = body.toString('utf8').trim();
+        if (!text || !['{', '['].includes(text[0])) return;
+        try {
+          captures.push({ url, status: response.status(), json: JSON.parse(text) });
+        } catch {
+          // Not a JSON payload. The rendered-seat fallback below remains available.
+        }
+      })
       .catch(() => {});
     pendingCaptures.push(capture);
   });
@@ -143,24 +154,42 @@ export async function inspectSession(context, session, { allowedRows, excludeAcc
     }
 
     const vista = extractVistaSeats(captures, { allowedRows, excludeAccessible });
-    const availableCount = vista.seats.filter((seat) => seat.status === 'available').length;
+    let extraction = vista;
+    let method = 'vista-live-payload';
+
     if (vista.confidence !== 'high') {
-      await saveDebug(page, `${debugName}-no-authoritative-seat-data`, {
+      const visual = await extractVisualSeats(page, { allowedRows, excludeAccessible });
+      if (visual.confidence === 'high') {
+        extraction = visual;
+        method = 'rendered-seat-icons';
+      } else {
+        extraction = {
+          seats: [],
+          confidence: visual.confidence === 'low' || vista.confidence === 'low' ? 'low' : 'none',
+          diagnostics: { vista: vista.diagnostics, visual: visual.diagnostics },
+        };
+      }
+    }
+
+    const availableCount = extraction.seats.filter((seat) => seat.status === 'available').length;
+    if (extraction.confidence !== 'high') {
+      await saveDebug(page, `${debugName}-seat-data-unverified`, {
         url: session.url,
         metadata,
         availableCount,
-        vista: vista.diagnostics,
+        diagnostics: extraction.diagnostics,
         bodyText: bodyText.slice(0, 5000),
       });
     }
 
+    console.log(`${metadata.date} ${title}: ${method}; ${availableCount} verified available seat(s).`);
     return {
       ...metadata,
       url: session.url,
-      seats: vista.seats,
-      confidence: vista.confidence,
+      seats: extraction.seats,
+      confidence: extraction.confidence,
       blocked: false,
-      diagnostics: vista.diagnostics,
+      diagnostics: { method, ...extraction.diagnostics },
     };
   } catch (error) {
     await saveDebug(page, `${debugName}-error`, { url: session.url, error: error.stack || String(error) });

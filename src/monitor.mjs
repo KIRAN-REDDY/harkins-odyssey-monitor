@@ -57,7 +57,7 @@ function alertBody(alerts) {
   const lines = [
     '## Verified Odyssey IMAX 70mm seat availability',
     '',
-    'Every seat below was reported as **`Available`** by Harkins’ live Vista seat-availability response and matched to the auditorium seat layout.',
+    'Every seat below was verified from Harkins’ live seat map. The monitor accepts authoritative live seat data when exposed; otherwise it reads the rendered red-seat and unavailable-seat icons without selecting or holding seats.',
     '',
   ];
   for (const alert of alerts) {
@@ -125,7 +125,7 @@ async function main() {
       if (result.skippedFormat || !result.isImax70mm) continue;
       if (!shouldCheckSession(result, today, nowMinutes)) continue;
       if (result.confidence !== 'high') {
-        console.warn(`No authoritative Vista seat data; no alert: ${result.url}`);
+        console.warn(`Seat availability could not be verified; no alert: ${result.url}`);
         continue;
       }
 

@@ -1,9 +1,9 @@
 {
   "name": "harkins-odyssey-seat-monitor",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "Fail-closed cloud Playwright monitor using Harkins/Vista live seat availability for 3+ adjacent middle-50% Odyssey IMAX 70mm seats.",
+  "description": "Fail-closed cloud Playwright monitor that verifies Harkins seat availability from live API data or rendered seat icons.",
   "scripts": {
     "monitor": "node src/monitor.mjs",
     "inspect": "node src/inspect.mjs",
