@@ -88,4 +88,11 @@ When verification fails, the workflow uploads screenshots, HTML, and JSON metada
 
 - Wednesday, July 29, 2026: every 10 minutes, scanning August 21 through September 11.
 - Thursday, July 30 through Friday, September 11, 2026: every 4 hours, scanning a rolling 45-day window.
-- The date-specific cron entries should be removed or replaced after September 11 if monitoring should continue.
+- At 12:05 AM Phoenix time on September 12, a lightweight retirement job disables `monitor.yml` automatically. The monitoring job also refuses to run after September 11, 2026. No manual shutdown is required.
+
+
+## Automatic retirement
+
+The workflow has a hard expiration date of **September 11, 2026**. At **12:05 AM Phoenix time on September 12**, a final lightweight job calls GitHub's workflow-disable API using the repository's temporary `GITHUB_TOKEN`. It does not install Node, Playwright, or Chrome during that retirement run.
+
+The gate job also checks the Phoenix calendar date before every invocation. Any manual or delayed invocation after September 11 skips all seat-monitoring work and disables the workflow instead. The workflow requests `actions: write` solely for this self-disable operation.

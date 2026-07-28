@@ -14,6 +14,11 @@ on:
       timezone: 'America/Phoenix'
     - cron: '17 */4 1-11 9 *'
       timezone: 'America/Phoenix'
+
+    # One final lightweight run disables this workflow after the monitoring window.
+    - cron: '5 0 12 9 *'
+      timezone: 'America/Phoenix'
+
   workflow_dispatch:
     inputs:
       start_offset_days:
@@ -31,6 +36,7 @@ on:
         default: false
 
 permissions:
+  actions: write
   contents: read
   issues: write
 
@@ -39,7 +45,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_monitor: ${{ steps.window.outputs.should_monitor }}
+      should_disable: ${{ steps.window.outputs.should_disable }}
+    steps:
+      - name: Enforce September 11 expiration
+        id: window
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          today=$(TZ=America/Phoenix date +%F)
+          retirement_schedule='5 0 12 9 *'
+
+          if [[ "$EVENT_SCHEDULE" == "$retirement_schedule" || "$today" > '2026-09-11' ]]; then
+            echo "Monitoring window expired on September 11, 2026."
+            echo "should_monitor=false" >> "$GITHUB_OUTPUT"
+            echo "should_disable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Monitoring window is active."
+            echo "should_monitor=true" >> "$GITHUB_OUTPUT"
+            echo "should_disable=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  retire:
+    needs: gate
+    if: ${{ needs.gate.outputs.should_disable == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disable this workflow permanently
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          echo "Disabling ${GITHUB_WORKFLOW} after the September 11, 2026 cutoff."
+          gh api \
+            --method PUT \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/monitor.yml/disable"
+          echo "Workflow disabled successfully."
+
   monitor:
+    needs: gate
+    if: ${{ needs.gate.outputs.should_monitor == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
