@@ -1,0 +1,95 @@
+name: Harkins Odyssey Seat Monitor
+
+on:
+  schedule:
+    # Near-term dates: every 10 minutes.
+    - cron: '*/10 * * * *'
+    # Later dates: hourly at minute 7, avoiding overlap with the near-term run.
+    - cron: '7 * * * *'
+  workflow_dispatch:
+    inputs:
+      start_offset_days:
+        description: 'Start this many days from today'
+        required: false
+        default: '0'
+      scan_days:
+        description: 'Number of dates to scan'
+        required: false
+        default: '45'
+      send_test_notification:
+        description: 'Create a setup test notification'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: harkins-odyssey-seat-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      THEATRE_ID: '16'
+      MOVIE_ID: 'HO00014201'
+      MOVIE_SLUG: 'the-odyssey'
+      TIME_ZONE: 'America/Phoenix'
+      ROWS: 'G,H,I,J,K,L,M'
+      MIN_ADJACENT: '3'
+      MIDDLE_PERCENT: '50'
+      AFTER_MINUTES: '840'
+      EXCLUDE_ACCESSIBLE: 'true'
+      SESSION_CONCURRENCY: '3'
+      ALERT_GITHUB_USER: 'KIRAN-REDDY'
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chrome for Testing
+        run: npx playwright install --with-deps chromium
+
+      - name: Set scan range
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "START_OFFSET_DAYS=${{ inputs.start_offset_days }}" >> "$GITHUB_ENV"
+            echo "SCAN_DAYS=${{ inputs.scan_days }}" >> "$GITHUB_ENV"
+          elif [[ "${{ github.event.schedule }}" == "7 * * * *" ]]; then
+            echo "START_OFFSET_DAYS=7" >> "$GITHUB_ENV"
+            echo "SCAN_DAYS=38" >> "$GITHUB_ENV"
+          else
+            echo "START_OFFSET_DAYS=0" >> "$GITHUB_ENV"
+            echo "SCAN_DAYS=7" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Send setup test notification
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test_notification }}
+        run: npm run test-alert
+
+      - name: Check Harkins seats
+        run: npm run monitor
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harkins-debug-${{ github.run_id }}
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 5

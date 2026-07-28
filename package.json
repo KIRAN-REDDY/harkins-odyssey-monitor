@@ -1,0 +1,19 @@
+{
+  "name": "harkins-odyssey-seat-monitor",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Playwright monitor for 3+ adjacent Harkins Odyssey IMAX 70mm seats in the middle 50% of rows G-M, with credential-free GitHub email notifications.",
+  "scripts": {
+    "monitor": "node src/monitor.mjs",
+    "inspect": "node src/inspect.mjs",
+    "test": "node --test src/lib.test.mjs",
+    "test-alert": "node src/test-alert.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "1.61.1"
+  }
+}
