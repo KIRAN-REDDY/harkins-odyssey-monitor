@@ -115,16 +115,15 @@ export function findAdjacentGroups(rawSeats, minAdjacent = 3, middlePercent = 50
     // portion of the complete row. For 50%, this removes the outer 25% on each side.
     const boundedMiddlePercent = Math.min(100, Math.max(1, Number(middlePercent) || 50));
     const outerFraction = (1 - boundedMiddlePercent / 100) / 2;
-    const firstCenter = positioned[0].x + positioned[0].width / 2;
-    const lastCenter = positioned.at(-1).x + positioned.at(-1).width / 2;
+    const firstCenter = positioned[0].x;
+    const lastCenter = positioned.at(-1).x;
     const rowSpan = lastCenter - firstCenter;
     const middleStart = firstCenter + rowSpan * outerFraction;
     const middleEnd = lastCenter - rowSpan * outerFraction;
 
     const available = positioned.filter((seat) => {
       if (seat.status !== 'available') return false;
-      const center = seat.x + seat.width / 2;
-      return center >= middleStart && center <= middleEnd;
+      return seat.x >= middleStart && seat.x <= middleEnd;
     });
     let run = [];
     const flush = () => {

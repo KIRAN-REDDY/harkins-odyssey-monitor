@@ -29,7 +29,7 @@ const config = {
 
 function shouldCheckSession(result, today, nowMinutes) {
   if (!result.date || result.minutes === null || result.minutes === undefined) return false;
-  if (result.minutes <= config.minShowMinutes) return false; // "after 2 PM" is strict.
+  if (result.minutes <= config.minShowMinutes) return false;
   if (result.date < today) return false;
   if (result.date === today && result.minutes <= nowMinutes) return false;
   return true;
@@ -53,11 +53,29 @@ async function asyncPool(limit, items, worker) {
   return results;
 }
 
+function alertBody(alerts) {
+  const lines = [
+    '## Verified Odyssey IMAX 70mm seat availability',
+    '',
+    'Every seat below was reported as **`Available`** by Harkins’ live Vista seat-availability response and matched to the auditorium seat layout.',
+    '',
+  ];
+  for (const alert of alerts) {
+    lines.push(
+      `### ${alert.date} at ${alert.clock}`,
+      '',
+      `- **Rows/seats:** ${alert.groupText}`,
+      `- **Seat position:** Entire group is within the middle ${config.middlePercent}% of its row`,
+      `- [Open the Harkins seat map](${alert.url})`,
+      '',
+    );
+  }
+  lines.push('> Availability can change immediately.');
+  return lines.join('\n');
+}
+
 async function main() {
-  console.log('Monitor configuration:', {
-    ...config,
-    allowedRows: [...config.allowedRows],
-  });
+  console.log('Monitor configuration:', { ...config, allowedRows: [...config.allowedRows] });
   const today = dateInTimeZone(config.timeZone);
   const nowMinutes = minutesInTimeZone(config.timeZone);
   const { issueNumber, state } = await loadState();
@@ -68,6 +86,7 @@ async function main() {
     viewport: { width: 1440, height: 1200 },
     locale: 'en-US',
     timezoneId: config.timeZone,
+    serviceWorkers: 'block',
   });
 
   try {
@@ -93,10 +112,11 @@ async function main() {
     console.log(`Inspecting ${uniqueSessions.length} unique possible session(s) after pre-filtering.`);
 
     const results = await asyncPool(config.concurrency, uniqueSessions, (session) =>
-      inspectSession(context, session, config),
-    );
+      inspectSession(context, session, config));
 
     const scannedAt = new Date().toISOString();
+    const pendingAlerts = [];
+
     for (const result of results) {
       if (result.blocked) {
         console.warn(`Blocked session; skipped without bypassing: ${result.url}`);
@@ -105,7 +125,7 @@ async function main() {
       if (result.skippedFormat || !result.isImax70mm) continue;
       if (!shouldCheckSession(result, today, nowMinutes)) continue;
       if (result.confidence !== 'high') {
-        console.warn(`Low-confidence seat extraction; no alert: ${result.url}`);
+        console.warn(`No authoritative Vista seat data; no alert: ${result.url}`);
         continue;
       }
 
@@ -115,40 +135,43 @@ async function main() {
 
       if (!groups.length) {
         if (prior) delete state.sessions[result.url];
-        console.log(`${result.date} ${formatClock(result.minutes)}: no qualifying groups.`);
+        console.log(`${result.date} ${formatClock(result.minutes)}: no verified qualifying groups.`);
         continue;
       }
 
       if (prior?.fingerprint === fingerprint) {
-        console.log(`${result.date} ${formatClock(result.minutes)}: qualifying seats unchanged; suppressing duplicate alert.`);
+        console.log(`${result.date} ${formatClock(result.minutes)}: verified qualifying seats unchanged; suppressing duplicate alert.`);
         continue;
       }
 
-      const clock = formatClock(result.minutes);
-      const groupText = formatGroups(groups);
-      const title = `🎟️ Odyssey IMAX 70mm seats: ${result.date} at ${clock}`;
-      const body = [
-        '## 3+ adjacent middle-section Odyssey IMAX 70mm seats found',
-        '',
-        `- **Date:** ${result.date}`,
-        `- **Showtime:** ${clock}`,
-        `- **Rows/seats:** ${groupText}`,
-        `- **Seat position:** Entire group is within the middle ${config.middlePercent}% of its row`,
-        '',
-        `[Open the Harkins seat map](${result.url})`,
-        '',
-        '> Availability can change immediately.',
-      ].join('\n');
-      const sent = await sendGitHubAlert({ title, body });
-      if (!sent) {
-        console.warn(`Alert was not delivered for ${result.date} ${clock}; it will be retried next run.`);
-        continue;
-      }
-      state.sessions[result.url] = { fingerprint, lastSeen: scannedAt };
-      console.log(`GitHub alert created for ${result.date} ${clock}: ${groupText}`);
+      pendingAlerts.push({
+        url: result.url,
+        date: result.date,
+        clock: formatClock(result.minutes),
+        minutes: result.minutes,
+        groupText: formatGroups(groups),
+        fingerprint,
+      });
     }
 
-    // Remove very old entries so the state issue stays small.
+    pendingAlerts.sort((a, b) => a.date.localeCompare(b.date) || a.minutes - b.minutes);
+    if (pendingAlerts.length) {
+      const title = pendingAlerts.length === 1
+        ? `🎟️ Odyssey IMAX 70mm seats: ${pendingAlerts[0].date} at ${pendingAlerts[0].clock}`
+        : `🎟️ Odyssey IMAX 70mm seats: ${pendingAlerts.length} verified showtimes`;
+      const sent = await sendGitHubAlert({ title, body: alertBody(pendingAlerts) });
+      if (sent) {
+        for (const alert of pendingAlerts) {
+          state.sessions[alert.url] = { fingerprint: alert.fingerprint, lastSeen: scannedAt };
+        }
+        console.log(`Created one GitHub alert covering ${pendingAlerts.length} verified showtime(s).`);
+      } else {
+        console.warn('Alert delivery failed; verified matches will be retried next run.');
+      }
+    } else {
+      console.log('No new verified qualifying availability to alert.');
+    }
+
     const cutoff = Date.now() - 60 * 24 * 60 * 60 * 1000;
     for (const [url, entry] of Object.entries(state.sessions)) {
       if (entry.lastSeen && Date.parse(entry.lastSeen) < cutoff) delete state.sessions[url];

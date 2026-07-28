@@ -1,99 +1,67 @@
-# Harkins Odyssey IMAX 70mm Seat Monitor
+# Harkins Odyssey IMAX 70mm Seat Monitor — authoritative availability version
 
-This Playwright monitor checks **The Odyssey (IMAX 70mm)** at **Harkins Arizona Mills 18** and alerts only when it confidently detects:
+This version fixes the false-positive bug in the earlier monitor.
 
-- a showtime strictly **after 2:00 PM**;
-- **3 or more consecutive, physically adjacent seats**;
-- in rows **G through M**;
-- with the **entire adjacent group inside the middle 50% of its row** (the outer 25% on each side is ignored);
-- on any date within the configured forward-looking window.
+The earlier version treated a seat-shaped clickable element as available when Harkins did not expose a readable DOM status. Because sold/unavailable seats can still be rendered as interactive SVG/button elements, that logic could incorrectly label the entire auditorium as open.
 
-It does **not** log in, solve CAPTCHAs, reserve, hold, or purchase tickets. If Harkins blocks the cloud browser or changes its seat-map markup, the run saves screenshots/HTML under the workflow's diagnostic artifact and does not send a guess-based alert.
+This version **fails closed**. It sends an alert only when all of these conditions are met:
 
-## How the credential-free email alert works
+- the show is **The Odyssey (IMAX 70mm)** at Harkins Arizona Mills 18;
+- the showtime is strictly **after 2:00 PM**;
+- Harkins' live Vista `seat-availability` response explicitly reports each seat as **`Available`**;
+- the availability record is matched by `seatId` to the official Vista auditorium `seat-layout` response;
+- at least **3 consecutive seats** are physically adjacent;
+- the seats are in rows **G through M**;
+- the complete group is within the **middle 50%** of its row.
 
-The workflow creates a private GitHub issue, assigns it to **@KIRAN-REDDY**, and mentions that account. GitHub then sends the issue notification to the verified email address configured for the GitHub account.
+`Sold`, `Broken`, and `House` are always treated as unavailable. Unknown statuses, missing API responses, schema changes, blocks, and CAPTCHAs produce **no alert** and a diagnostic artifact instead.
 
-No Gmail password, app password, SMTP credential, Telegram token, or third-party email key is stored in the repository. GitHub Actions supplies its own temporary `GITHUB_TOKEN` automatically for each run.
+The monitor never logs in, reserves, holds, or purchases tickets.
 
-The email comes from GitHub Notifications rather than directly from this script. Its subject will include the generated issue title, such as:
+## Alerts
 
-`🎟️ Odyssey IMAX 70mm seats: 2026-08-02 at 6:00 PM`
+The workflow creates one private GitHub issue per scan, even when multiple qualifying showtimes are found. This prevents dozens of separate emails. It assigns and mentions `@KIRAN-REDDY`, so GitHub sends the notification to the verified email selected in the account's notification settings.
 
-## Why it runs without your Mac
+No Gmail password, SMTP credential, Telegram token, or repository secret is required.
 
-GitHub Actions supplies a temporary cloud computer for each check. The included workflow scans:
+## Schedule
 
-- today through day 6 every 10 minutes;
-- days 7 through 44 once per hour;
-- any custom range when you run it manually.
+- Today through day 6: every 10 minutes.
+- Days 7 through 44: once per hour.
+- Manual runs default to 7 days rather than 45.
 
-GitHub schedules can run late, so this is frequent monitoring rather than a guaranteed real-time feed.
+## Update an existing repository
 
-## 1. Put this project in your private repository
+Replace the repository's files with this package, commit, and push. The included state format is version 2, so fingerprints created by the old false-positive parser are automatically discarded.
 
-Use this repository:
+## First validation run
 
-`KIRAN-REDDY/harkins-odyssey-monitor`
+In GitHub:
 
-1. Create it as a **private** repository if it does not already exist.
-2. Unzip this project and upload all files, including `.github/workflows/monitor.yml`.
-3. Commit them to the default branch.
-
-The monitor keeps duplicate-alert state in a private GitHub issue named **“Harkins Odyssey monitor state — do not delete.”**
-
-## 2. Enable GitHub email notifications
-
-1. In GitHub, open **Settings → Notifications**.
-2. Under **Subscriptions**, make sure **Email** is enabled for **Participating, @mentions and custom**.
-3. Confirm that the email address selected there is verified and is the address where you want ticket alerts.
-
-No repository secrets need to be added.
-
-## 3. Test the notification
-
-1. Open your repository.
-2. Select **Actions → Harkins Odyssey Seat Monitor**.
-3. Select **Run workflow**.
-4. Leave **Create a setup test notification** checked.
+1. Open **Actions → Harkins Odyssey Seat Monitor**.
+2. Select **Run workflow**.
+3. Leave **Create a setup test notification** unchecked.
+4. Use **7** scan days.
 5. Run it.
 
-The workflow creates an issue titled **“✅ Harkins seat monitor test notification”**, assigns it to **@KIRAN-REDDY**, and mentions the account. GitHub should then email the account according to its notification settings.
+Expected behavior:
 
-The test issue does not mean seats were found. You may close it after confirming delivery.
+- A ticket alert is created only when verified qualifying seats exist.
+- If Harkins data cannot be verified, no ticket alert is created.
+- Diagnostics are uploaded to the workflow run under **Artifacts**.
 
 ## Configuration
-
-Edit the workflow environment variables to change behavior:
 
 | Variable | Default | Meaning |
 |---|---:|---|
 | `ROWS` | `G,H,I,J,K,L,M` | Allowed rows |
-| `MIN_ADJACENT` | `3` | Minimum adjacent seat count |
-| `MIDDLE_PERCENT` | `50` | Central percentage of each full row allowed; 50 excludes the outer 25% on each side |
-| `AFTER_MINUTES` | `840` | Strict cutoff in minutes after midnight; 840 = 2:00 PM |
-| `EXCLUDE_ACCESSIBLE` | `true` | Avoid wheelchair/companion seats |
-| `SESSION_CONCURRENCY` | `3` | Parallel session pages; keep low to reduce load |
-| `ALERT_GITHUB_USER` | `KIRAN-REDDY` | GitHub account assigned and mentioned in alert issues |
+| `MIN_ADJACENT` | `3` | Minimum consecutive seats |
+| `MIDDLE_PERCENT` | `50` | Allowed central portion of each row |
+| `AFTER_MINUTES` | `840` | Strict cutoff; 840 is 2:00 PM |
+| `EXCLUDE_ACCESSIBLE` | `true` | Exclude wheelchair and companion seats |
+| `SESSION_CONCURRENCY` | `3` | Parallel session pages |
+| `ALERT_GITHUB_USER` | `KIRAN-REDDY` | Account assigned and mentioned |
 
-## Diagnostics and selector changes
+## Diagnostics
 
-When extraction confidence is low, the workflow uploads a **harkins-debug** artifact containing a screenshot, HTML, and metadata. This prevents false alerts.
-
-To inspect one exact ticketing URL locally or in a manual cloud run:
-
-```bash
-npm install
-npx playwright install chromium
-npm run inspect -- "PASTE_EXACT_HARKINS_TICKETING_URL"
-```
-
-The script recognizes seat IDs from accessible labels, titles, seat data attributes, button text, and common SVG seat elements. It uses both consecutive seat numbers and their on-screen spacing so it will not normally treat seats separated by a large aisle as side by side. It determines the middle 50% from the horizontal span of all detected seats in each row, then requires every seat in a qualifying group to fall inside that central band.
-
-## Practical limits
-
-- Harkins can change the site or block data-center browsers at any time.
-- GitHub scheduled workflows may be delayed.
-- A seat can disappear between the notification and opening the booking page.
-- Private-repository GitHub Actions usage counts against the plan's included Actions minutes.
-- Do not shorten the interval aggressively or increase concurrency significantly.
+The workflow uploads screenshots, HTML, and JSON metadata when the authoritative Vista responses are absent, blocked, mismatched, or changed. The monitor does not fall back to guessing from seat colors or clickability.

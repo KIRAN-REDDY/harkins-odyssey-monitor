@@ -1,5 +1,6 @@
 const STATE_TITLE = 'Harkins Odyssey monitor state — do not delete';
 const MARKER = '<!-- HARKINS_ODYSSEY_MONITOR_STATE -->';
+const STATE_VERSION = 2;
 
 function githubHeaders(token) {
   return {
@@ -24,16 +25,23 @@ async function githubRequest(path, options = {}) {
   return response.json();
 }
 
+function emptyState() {
+  return { version: STATE_VERSION, sessions: {} };
+}
+
 function parseState(body = '') {
   const markerIndex = body.indexOf(MARKER);
-  if (markerIndex < 0) return { version: 1, sessions: {} };
+  if (markerIndex < 0) return emptyState();
   const jsonMatch = body.slice(markerIndex + MARKER.length).match(/```json\s*([\s\S]*?)```/i);
-  if (!jsonMatch) return { version: 1, sessions: {} };
+  if (!jsonMatch) return emptyState();
   try {
     const parsed = JSON.parse(jsonMatch[1]);
-    return { version: 1, sessions: {}, ...parsed };
+    // Version 1 used visual/interactive DOM guesses and produced false positives.
+    // Never reuse those fingerprints with the authoritative Vista parser.
+    if (parsed.version !== STATE_VERSION) return emptyState();
+    return { ...emptyState(), ...parsed, sessions: parsed.sessions || {} };
   } catch {
-    return { version: 1, sessions: {} };
+    return emptyState();
   }
 }
 
@@ -44,21 +52,23 @@ function serializeState(state) {
 export async function loadState() {
   if (!process.env.GITHUB_TOKEN || !process.env.GITHUB_REPOSITORY) {
     console.warn('No GITHUB_TOKEN/GITHUB_REPOSITORY: deduplication state is in-memory only.');
-    return { issueNumber: null, state: { version: 1, sessions: {} } };
+    return { issueNumber: null, state: emptyState() };
   }
   const issues = await githubRequest('/issues?state=all&per_page=100');
   const issue = issues.find((item) => item.title === STATE_TITLE && !item.pull_request);
   if (issue) return { issueNumber: issue.number, state: parseState(issue.body) };
 
+  const state = emptyState();
   const created = await githubRequest('/issues', {
     method: 'POST',
-    body: JSON.stringify({ title: STATE_TITLE, body: serializeState({ version: 1, sessions: {} }) }),
+    body: JSON.stringify({ title: STATE_TITLE, body: serializeState(state) }),
   });
-  return { issueNumber: created.number, state: { version: 1, sessions: {} } };
+  return { issueNumber: created.number, state };
 }
 
 export async function saveState(issueNumber, state) {
   if (!issueNumber) return;
+  state.version = STATE_VERSION;
   state.updatedAt = new Date().toISOString();
   await githubRequest(`/issues/${issueNumber}`, {
     method: 'PATCH',
