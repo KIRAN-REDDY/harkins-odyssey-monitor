@@ -1,6 +1,6 @@
 const STATE_TITLE = 'Harkins Odyssey monitor state — do not delete';
 const MARKER = '<!-- HARKINS_ODYSSEY_MONITOR_STATE -->';
-const STATE_VERSION = 3;
+const STATE_VERSION = 4;
 
 function githubHeaders(token) {
   return {
@@ -36,8 +36,8 @@ function parseState(body = '') {
   if (!jsonMatch) return emptyState();
   try {
     const parsed = JSON.parse(jsonMatch[1]);
-    // Older versions treated generic seat buttons as available and produced false positives.
-    // Never reuse their fingerprints with the verified icon/API parser.
+    // Older versions used different seat rules or unreliable availability detection.
+    // Never reuse their fingerprints with the current six-ticket rule engine.
     if (parsed.version !== STATE_VERSION) return emptyState();
     return { ...emptyState(), ...parsed, sessions: parsed.sessions || {} };
   } catch {

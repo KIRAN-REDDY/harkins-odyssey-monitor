@@ -2,11 +2,12 @@ import { chromium } from 'playwright';
 import {
   addDays,
   dateInTimeZone,
-  findAdjacentGroups,
+  findTicketPlan,
   formatClock,
   groupsFingerprint,
   minutesInTimeZone,
   parseRows,
+  showtimeIsAllowed,
 } from './lib.mjs';
 import { discoverSessions, inspectSession } from './harkins.mjs';
 import { loadState, saveState } from './github-state.mjs';
@@ -18,9 +19,11 @@ const config = {
   movieSlug: process.env.MOVIE_SLUG || 'the-odyssey',
   timeZone: process.env.TIME_ZONE || 'America/Phoenix',
   allowedRows: parseRows(process.env.ROWS || 'G,H,I,J,K,L,M'),
-  minAdjacent: Number(process.env.MIN_ADJACENT || 3),
+  totalTickets: Number(process.env.TOTAL_TICKETS || 6),
+  minBlockSize: Number(process.env.MIN_BLOCK_SIZE || 2),
   middlePercent: Number(process.env.MIDDLE_PERCENT || 50),
   minShowMinutes: Number(process.env.AFTER_MINUTES || 14 * 60),
+  maxShowMinutes: Number(process.env.LAST_SHOW_MINUTES || 23 * 60),
   startOffsetDays: Number(process.env.START_OFFSET_DAYS || 0),
   scanDays: Number(process.env.SCAN_DAYS || 7),
   concurrency: Math.max(1, Number(process.env.SESSION_CONCURRENCY || 3)),
@@ -29,14 +32,16 @@ const config = {
 
 function shouldCheckSession(result, today, nowMinutes) {
   if (!result.date || result.minutes === null || result.minutes === undefined) return false;
-  if (result.minutes <= config.minShowMinutes) return false;
+  if (!showtimeIsAllowed(result.minutes, config.minShowMinutes, config.maxShowMinutes)) return false;
   if (result.date < today) return false;
   if (result.date === today && result.minutes <= nowMinutes) return false;
   return true;
 }
 
-function formatGroups(groups) {
-  return groups.map((group) => `${group.seats[0]}–${group.seats.at(-1)} (${group.seats.length})`).join(', ');
+function formatPlan(plan) {
+  return plan.blocks
+    .map((block) => `${block.seats[0]}–${block.seats.at(-1)} (${block.seats.length})`)
+    .join(' + ');
 }
 
 async function asyncPool(limit, items, worker) {
@@ -64,7 +69,8 @@ function alertBody(alerts) {
     lines.push(
       `### ${alert.date} at ${alert.clock}`,
       '',
-      `- **Rows/seats:** ${alert.groupText}`,
+      `- **Six-seat arrangement:** ${alert.groupText}`,
+      `- **Allowed pattern:** ${alert.patternText}`,
       `- **Seat position:** Entire group is within the middle ${config.middlePercent}% of its row`,
       `- [Open the Harkins seat map](${alert.url})`,
       '',
@@ -104,7 +110,7 @@ async function main() {
       .filter((session) => {
         const date = session.url.match(/\/date\/(\d{4}-\d{2}-\d{2})/)?.[1];
         if (session.anchorMinutes !== null && session.anchorMinutes !== undefined) {
-          if (session.anchorMinutes <= config.minShowMinutes) return false;
+          if (!showtimeIsAllowed(session.anchorMinutes, config.minShowMinutes, config.maxShowMinutes)) return false;
           if (date === today && session.anchorMinutes <= nowMinutes) return false;
         }
         return !date || date >= today;
@@ -129,7 +135,13 @@ async function main() {
         continue;
       }
 
-      const groups = findAdjacentGroups(result.seats, config.minAdjacent, config.middlePercent);
+      const plan = findTicketPlan(
+        result.seats,
+        config.totalTickets,
+        config.minBlockSize,
+        config.middlePercent,
+      );
+      const groups = plan?.blocks || [];
       const fingerprint = groupsFingerprint(groups);
       const prior = state.sessions[result.url];
 
@@ -149,7 +161,8 @@ async function main() {
         date: result.date,
         clock: formatClock(result.minutes),
         minutes: result.minutes,
-        groupText: formatGroups(groups),
+        groupText: formatPlan(plan),
+        patternText: plan.pattern.join('+'),
         fingerprint,
       });
     }

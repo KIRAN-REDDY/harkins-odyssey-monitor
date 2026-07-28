@@ -159,6 +159,166 @@ export function findAdjacentGroups(rawSeats, minAdjacent = 3, middlePercent = 50
   return groups.sort((a, b) => a.row.localeCompare(b.row) || a.first - b.first);
 }
 
+
+/**
+ * Return maximal runs of physically adjacent, consecutively numbered available
+ * seats whose centers are inside the requested middle portion of each row.
+ */
+export function findAvailableRuns(rawSeats, minBlockSize = 2, middlePercent = 50) {
+  const seats = dedupeSeats(rawSeats);
+  const rows = new Map();
+  for (const seat of seats) {
+    if (!rows.has(seat.row)) rows.set(seat.row, []);
+    rows.get(seat.row).push(seat);
+  }
+
+  const runs = [];
+  for (const [row, rowSeats] of rows.entries()) {
+    const positioned = rowSeats
+      .filter((seat) => Number.isFinite(seat.x) && Number.isFinite(seat.y) && seat.width > 0 && seat.height > 0)
+      .sort((a, b) => a.x - b.x);
+    if (positioned.length < minBlockSize) continue;
+
+    const allGaps = [];
+    for (let index = 1; index < positioned.length; index += 1) {
+      const gap = positioned[index].x - positioned[index - 1].x;
+      if (gap > 1) allGaps.push(gap);
+    }
+    const typicalGap = median(allGaps);
+    if (!typicalGap) continue;
+    const maxAdjacentGap = typicalGap * 1.72;
+
+    const boundedMiddlePercent = Math.min(100, Math.max(1, Number(middlePercent) || 50));
+    const outerFraction = (1 - boundedMiddlePercent / 100) / 2;
+    const firstCenter = positioned[0].x;
+    const lastCenter = positioned.at(-1).x;
+    const rowSpan = lastCenter - firstCenter;
+    const middleStart = firstCenter + rowSpan * outerFraction;
+    const middleEnd = lastCenter - rowSpan * outerFraction;
+
+    const available = positioned.filter((seat) =>
+      seat.status === 'available' && seat.x >= middleStart && seat.x <= middleEnd);
+
+    let run = [];
+    const flush = () => {
+      if (run.length >= minBlockSize) {
+        runs.push({
+          row,
+          seatObjects: [...run],
+          seats: run.map((seat) => `${seat.row}${seat.number}`),
+          first: run[0].number,
+          last: run.at(-1).number,
+          length: run.length,
+          centerX: (run[0].x + run.at(-1).x) / 2,
+        });
+      }
+      run = [];
+    };
+
+    for (const seat of available) {
+      if (!run.length) {
+        run = [seat];
+        continue;
+      }
+      const previous = run.at(-1);
+      const numberIsConsecutive = Math.abs(seat.number - previous.number) === 1;
+      const physicallyAdjacent = seat.x - previous.x <= maxAdjacentGap;
+      const sameVerticalBand = Math.abs(seat.y - previous.y) <= Math.max(seat.height, previous.height) * 0.8;
+      if (numberIsConsecutive && physicallyAdjacent && sameVerticalBand) run.push(seat);
+      else {
+        flush();
+        run = [seat];
+      }
+    }
+    flush();
+  }
+
+  return runs.sort((a, b) => a.row.localeCompare(b.row) || a.first - b.first);
+}
+
+function centeredBlock(run, size) {
+  const surplus = run.seatObjects.length - size;
+  const start = Math.max(0, Math.floor(surplus / 2));
+  const selected = run.seatObjects.slice(start, start + size);
+  return {
+    row: run.row,
+    seats: selected.map((seat) => `${seat.row}${seat.number}`),
+    first: selected[0].number,
+    last: selected.at(-1).number,
+    length: selected.length,
+  };
+}
+
+function assignPatternToRuns(runs, pattern, index = 0, used = new Set(), selected = []) {
+  if (index >= pattern.length) return selected;
+  const size = pattern[index];
+
+  // Prefer a tighter fit; centeredBlock then chooses the middle seats within that run.
+  const candidates = runs
+    .map((run, runIndex) => ({ run, runIndex }))
+    .filter(({ run, runIndex }) => !used.has(runIndex) && run.length >= size)
+    .sort((a, b) => (a.run.length - size) - (b.run.length - size)
+      || a.run.row.localeCompare(b.run.row)
+      || a.run.first - b.run.first);
+
+  for (const { run, runIndex } of candidates) {
+    used.add(runIndex);
+    const result = assignPatternToRuns(
+      runs,
+      pattern,
+      index + 1,
+      used,
+      [...selected, centeredBlock(run, size)],
+    );
+    if (result) return result;
+    used.delete(runIndex);
+  }
+  return null;
+}
+
+function ticketPatterns(totalTickets, minBlockSize, maxPart = totalTickets) {
+  if (totalTickets === 0) return [[]];
+  const patterns = [];
+  for (let size = Math.min(totalTickets, maxPart); size >= minBlockSize; size -= 1) {
+    const remaining = totalTickets - size;
+    if (remaining > 0 && remaining < minBlockSize) continue;
+    for (const rest of ticketPatterns(remaining, minBlockSize, size)) {
+      patterns.push([size, ...rest]);
+    }
+  }
+  return patterns;
+}
+
+/**
+ * Find the requested number of tickets using adjacent blocks no smaller than
+ * minBlockSize. For six tickets with a minimum block of two, the accepted
+ * patterns are: 6, 4+2, 3+3, or 2+2+2.
+ */
+export function findTicketPlan(rawSeats, totalTickets = 6, minBlockSize = 2, middlePercent = 50) {
+  const runs = findAvailableRuns(rawSeats, minBlockSize, middlePercent);
+  const patterns = ticketPatterns(totalTickets, minBlockSize);
+
+  for (const pattern of patterns) {
+    const blocks = assignPatternToRuns(runs, pattern);
+    if (blocks) {
+      return {
+        totalTickets,
+        pattern,
+        blocks: blocks.sort((a, b) => a.row.localeCompare(b.row) || a.first - b.first),
+      };
+    }
+  }
+  return null;
+}
+
+export function findSixTicketPlan(rawSeats, middlePercent = 50) {
+  return findTicketPlan(rawSeats, 6, 2, middlePercent);
+}
+
+export function showtimeIsAllowed(minutes, afterMinutes = 14 * 60, cutoffMinutes = 23 * 60) {
+  return Number.isFinite(minutes) && minutes > afterMinutes && minutes <= cutoffMinutes;
+}
+
 export function groupsFingerprint(groups) {
   return groups.map((group) => `${group.row}:${group.seats.join(',')}`).sort().join('|');
 }

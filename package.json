@@ -1,9 +1,9 @@
 {
   "name": "harkins-odyssey-seat-monitor",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
-  "description": "Fail-closed cloud Playwright monitor that verifies Harkins seat availability from live API data or rendered seat icons.",
+  "description": "Fail-closed cloud Playwright monitor that verifies six-ticket Harkins availability from live API data or rendered seat icons.",
   "scripts": {
     "monitor": "node src/monitor.mjs",
     "inspect": "node src/inspect.mjs",
