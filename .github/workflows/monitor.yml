@@ -2,10 +2,18 @@ name: Harkins Odyssey Seat Monitor
 
 on:
   schedule:
-    # Near-term dates: every 10 minutes.
-    - cron: '*/10 * * * *'
-    # Later dates: hourly at minute 7, avoiding overlap with the near-term run.
-    - cron: '7 * * * *'
+    # Release day: every 10 minutes on Wednesday, July 29, 2026 (Phoenix time).
+    - cron: '*/10 * 29 7 *'
+      timezone: 'America/Phoenix'
+
+    # Easy mode from Thursday, July 30 through Friday, September 11, 2026:
+    # every 4 hours at minute 17 (Phoenix time).
+    - cron: '17 */4 30-31 7 *'
+      timezone: 'America/Phoenix'
+    - cron: '17 */4 * 8 *'
+      timezone: 'America/Phoenix'
+    - cron: '17 */4 1-11 9 *'
+      timezone: 'America/Phoenix'
   workflow_dispatch:
     inputs:
       start_offset_days:
@@ -69,12 +77,14 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "START_OFFSET_DAYS=${{ inputs.start_offset_days }}" >> "$GITHUB_ENV"
             echo "SCAN_DAYS=${{ inputs.scan_days }}" >> "$GITHUB_ENV"
-          elif [[ "${{ github.event.schedule }}" == "7 * * * *" ]]; then
-            echo "START_OFFSET_DAYS=7" >> "$GITHUB_ENV"
-            echo "SCAN_DAYS=38" >> "$GITHUB_ENV"
+          elif [[ "${{ github.event.schedule }}" == "*/10 * 29 7 *" ]]; then
+            # On release day, focus only on August 21 through September 11.
+            echo "START_OFFSET_DAYS=23" >> "$GITHUB_ENV"
+            echo "SCAN_DAYS=22" >> "$GITHUB_ENV"
           else
+            # From Thursday onward, check the full rolling 45-day window.
             echo "START_OFFSET_DAYS=0" >> "$GITHUB_ENV"
-            echo "SCAN_DAYS=7" >> "$GITHUB_ENV"
+            echo "SCAN_DAYS=45" >> "$GITHUB_ENV"
           fi
 
       - name: Run unit tests

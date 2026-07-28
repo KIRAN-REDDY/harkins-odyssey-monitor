@@ -83,3 +83,9 @@ gh workflow run monitor.yml \
 ## Diagnostics
 
 When verification fails, the workflow uploads screenshots, HTML, and JSON metadata under the run’s **Artifacts** section. Missing data, CAPTCHAs, blocks, unknown icons, or markup changes produce no ticket alert.
+
+## Temporary release schedule (Phoenix time)
+
+- Wednesday, July 29, 2026: every 10 minutes, scanning August 21 through September 11.
+- Thursday, July 30 through Friday, September 11, 2026: every 4 hours, scanning a rolling 45-day window.
+- The date-specific cron entries should be removed or replaced after September 11 if monitoring should continue.
